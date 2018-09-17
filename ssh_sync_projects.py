@@ -49,6 +49,8 @@ def get_remote_paths(path_file):
 
 def not_monitoring_file(path_file):
     global list_not_monitor_file
+    if len(list_not_monitor_file) == 0:
+        return False
     for file in list_not_monitor_file:
         if file in path_file:
             return True
@@ -57,6 +59,8 @@ def not_monitoring_file(path_file):
 
 def monitoring_file(path_file):
     global list_monitor_file
+    if len(list_monitor_file) == 0:
+        return True
     for file in list_monitor_file:
         if file in path_file:
             return True
@@ -65,10 +69,13 @@ def monitoring_file(path_file):
 
 def monitor_extension(path_file):
     global list_monitor_extension
+    if len(list_monitor_extension) == 0:
+        return True
     filename, file_extension = os.path.splitext(path_file)
     if file_extension in list_monitor_extension:
         return True
     return False
+
 
 
 class MyHandler(PatternMatchingEventHandler):
@@ -90,23 +97,22 @@ class MyHandler(PatternMatchingEventHandler):
                     event.event_type == "modified":
                 return
             if event.event_type == "created":
+                paths_to_create_dir = get_remote_paths(event.src_path)
+                if ssh_transport.linux_sync:
+                    print("CREATE directory Linux: " + str(paths_to_create_dir["linux"]))
+                    try:
+                        ssh_transport.mkdir_p(paths_to_create_dir["linux"], ssh_transport.sftp_linux)
+                    except Exception as ex:
+                        print("Exception create directory: " + str(ex))
+                        traceback.print_exc()
+                if ssh_transport.windows_sync:
+                    print("CREATE directory Windows: " + str(paths_to_create_dir["windows"]))
+                    try:
+                        ssh_transport.mkdir_p(paths_to_create_dir["windows"], ssh_transport.sftp_windows)
+                    except Exception as ex:
+                        print("Exception create directory: " + str(ex))
+                        traceback.print_exc()
                 return
-                # paths_to_create_dir = get_remote_paths(event.src_path)
-                # if ssh_transport.linux_sync:
-                #     print("CREATE directory Linux: " + str(paths_to_create_dir["linux"]))
-                #     try:
-                #         ssh_transport.mkdir_p(paths_to_create_dir["linux"], ssh_transport.sftp_linux)
-                #     except Exception as ex:
-                #         print("Exception create directory: " + str(ex))
-                #         traceback.print_exc()
-                # if ssh_transport.windows_sync:
-                #     print("CREATE directory Windows: " + str(paths_to_create_dir["windows"]))
-                #     try:
-                #         ssh_transport.mkdir_p(paths_to_create_dir["windows"], ssh_transport.sftp_windows)
-                #     except Exception as ex:
-                #         print("Exception create directory: " + str(ex))
-                #         traceback.print_exc()
-                # return
         else:
             if not monitoring_file(event.src_path) or not_monitoring_file(event.src_path) \
                     or not monitor_extension(event.src_path):
@@ -344,10 +350,16 @@ if __name__ == '__main__':
         server_linux = None
     if "list_monitor_file" in config_options:
         list_monitor_file = config_options["list_monitor_file"]
+    else:
+        list_monitor_file = []
     if "list_not_monitor_file" in config_options:
         list_not_monitor_file = config_options["list_not_monitor_file"]
+    else:
+        list_not_monitor_file = []
     if "list_monitor_extension" in config_options:
         list_monitor_extension = config_options["list_monitor_extension"]
+    else:
+        list_monitor_extension = []
 
     if sync_dir_linux is None and sync_dir_windows is None:
         print("Need sync_dir for Windows or Linux")
