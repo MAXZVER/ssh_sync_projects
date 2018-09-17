@@ -276,10 +276,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Tool to sniff traffic")
     parser.add_argument("-c", "--config-file", dest="config_file",
                         help="", required=True)
-    # parser.add_argument( "-s", "--sever-name", dest="linux_dir",
-    #                     help="", required=True)
-    # parser.add_argument("-w", "--windows-dir", dest="win_dit",
-    #                     help="", required=True)
     args = parser.parse_args()
 
     list_monitor_file = []
@@ -383,7 +379,8 @@ if __name__ == '__main__':
 
     ssh_transport = SSHTransport(server_linux, port_linux, user_linux, password_linux,
                                  server_windows, port_windows, user_windows, password_windows)
-
+    print("Linux sync dir: " + sync_dir_linux)
+    print("Windows sync dir: " + sync_dir_windows)
     observer = Observer()
     observer.schedule(MyHandler(), path=config_options["monitor_dir"], recursive=True)
     observer.start()
