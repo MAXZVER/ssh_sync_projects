@@ -1,5 +1,6 @@
 import os
 import json
+import platform
 import argparse
 import time
 import paramiko
@@ -12,12 +13,14 @@ from scp import SCPClient
 
 
 def convert_path_to_windows(path):
-    path = path.replace("/", '\\\\')
+    path = convert_path_to_unix(path)
+    path = path.replace("/", '\\')
     return path
 
 
 def convert_path_to_unix(path):
     path = path.replace("\\\\", '/')
+    path = path.replace("\\", '/')
     return path
 
 
@@ -77,7 +80,6 @@ def monitor_extension(path_file):
     return False
 
 
-
 class MyHandler(PatternMatchingEventHandler):
 
     @staticmethod
@@ -92,34 +94,22 @@ class MyHandler(PatternMatchingEventHandler):
         """
         # the file will be processed there
         global ssh_transport
+        if event.event_type == "moved":
+            ssh_transport.moved_file(event.src_path, event.dest_path)
+        if not monitoring_file(event.src_path) or not_monitoring_file(event.src_path):
+            return
         if event.is_directory:
-            if not monitoring_file(event.src_path) or not_monitoring_file(event.src_path) or \
-                    event.event_type == "modified":
+            if event.event_type == "modified":
                 return
-            if event.event_type == "created":
-                paths_to_create_dir = get_remote_paths(event.src_path)
-                if ssh_transport.linux_sync:
-                    print("CREATE directory Linux: " + str(paths_to_create_dir["linux"]))
-                    try:
-                        ssh_transport.mkdir_p(paths_to_create_dir["linux"], ssh_transport.sftp_linux)
-                    except Exception as ex:
-                        print("Exception create directory: " + str(ex))
-                        traceback.print_exc()
-                if ssh_transport.windows_sync:
-                    print("CREATE directory Windows: " + str(paths_to_create_dir["windows"]))
-                    try:
-                        ssh_transport.mkdir_p(paths_to_create_dir["windows"], ssh_transport.sftp_windows)
-                    except Exception as ex:
-                        print("Exception create directory: " + str(ex))
-                        traceback.print_exc()
+            elif event.event_type == "created":
+                ssh_transport.mkdir_ssh(event.src_path)
                 return
-        else:
-            if not monitoring_file(event.src_path) or not_monitoring_file(event.src_path) \
-                    or not monitor_extension(event.src_path):
+        elif not monitor_extension(event.src_path):
                 return
+        return
         if event.event_type == "deleted":
             return
-            # paths_to_delete = get_remote_paths(event.src_path)
+            # paths_to_delete = get_remote_paths(src_path)
             # if ssh_transport.linux_sync:
             #     print("DELETE Linux: " + str(paths_to_delete["linux"]))
             #     try:
@@ -177,6 +167,11 @@ class SSHTransport:
         else:
             self.windows_sync = False
 
+        if platform.system() == "Windows":
+            self.separator = "\\\\"
+        else:
+            self.separator = "/"
+
     def create_ssh_client_linux(self):
         self.client_ssh_linux = paramiko.SSHClient()
         self.client_ssh_linux.load_system_host_keys()
@@ -231,25 +226,69 @@ class SSHTransport:
                 print("Exception scp: " + str(ex))
                 traceback.print_exc()
 
-    def mkdir_p(self, remote_directory, sftp):
+    def moved_file(self, src_path, moved_path):
+        paths_to_src = get_remote_paths(src_path)
+        paths_to_dest = get_remote_paths(moved_path)
         self.check_ssh()
-        """Change to this directory, recursively making new folders if needed.
-            Returns True if any folders were created."""
-        if remote_directory == '/':
-            # absolute path so change directory to root
-            sftp.chdir('/')
-            return
-        if remote_directory == '':
-            # top-level relative directory must exist
-            return
-        try:
-            sftp.chdir(remote_directory)  # sub-directory exists
-        except IOError:
-            dir_name = os.path.dirname(remote_directory)
-            basename = os.path.basename(remote_directory)
-            self.mkdir_p(dir_name, sftp)  # make parent directories
-            sftp.mkdir(basename)          # sub-directory missing, so created it
-            return True
+        if self.linux_sync:
+            print("MOVED file or folder Linux: " + str(convert_path_to_unix(paths_to_src["linux"]) + " to " +
+                                                       convert_path_to_unix(paths_to_dest["linux"])))
+            try:
+                self.sftp_linux.posix_rename(convert_path_to_unix(paths_to_src["linux"]),
+                                             convert_path_to_unix(paths_to_dest["linux"]))
+            except Exception as ex:
+                print("Exception create directory: " + str(ex))
+                traceback.print_exc()
+        if self.windows_sync:
+            print("MOVED file or folder Windows: " + str(convert_path_to_windows(paths_to_src["windows"]) + " to " +
+                                                         convert_path_to_windows(paths_to_dest["windows"])))
+            try:
+                self.sftp_windows.posix_rename(convert_path_to_windows(paths_to_src["windows"]),
+                                               convert_path_to_windows(paths_to_dest["windows"]))
+            except Exception as ex:
+                print("Exception create directory: " + str(ex))
+                traceback.print_exc()
+
+    def mkdir_ssh(self, path_to_directory):
+        paths_to_create_dir = get_remote_paths(path_to_directory)
+        if self.linux_sync:
+            print("CREATE directory Linux: " + str(paths_to_create_dir["linux"]))
+            try:
+                global sync_dir_linux
+                self.mkdir(paths_to_create_dir["linux"], sync_dir_linux, self.sftp_linux, True)
+            except Exception as ex:
+                print("Exception create directory: " + str(ex))
+                traceback.print_exc()
+        if self.windows_sync:
+            print("CREATE directory Windows: " + str(paths_to_create_dir["windows"]))
+            try:
+                global sync_dir_windows
+                self.mkdir(paths_to_create_dir["windows"], sync_dir_windows, self.sftp_windows, False)
+                self.close_ssh_transport_windows()
+                self.init_ssh_transport_windows()
+            except Exception as ex:
+                print("Exception create directory: " + str(ex))
+                traceback.print_exc()
+
+    def mkdir(self, remote_directory, base_directory, sftp, linux):
+        self.check_ssh()
+        tree_new_dir = [os.path.basename(remote_directory)]
+        current_dir = os.path.dirname(remote_directory)
+        while current_dir != base_directory:
+            tree_new_dir.append(os.path.basename(current_dir))
+            current_dir = os.path.dirname(current_dir)
+        current_check_dir = base_directory
+        for current_dir in reversed(tree_new_dir):
+            if linux:
+                current_list_dir = sftp.listdir(convert_path_to_unix(current_check_dir))
+            else:
+                current_list_dir = sftp.listdir(convert_path_to_windows(current_check_dir))
+            current_check_dir = os.path.join(current_check_dir, current_dir)
+            if current_dir not in current_list_dir:
+                if linux:
+                    sftp.mkdir(convert_path_to_unix(current_check_dir))  # sub-directory missing, so created it
+                else:
+                    sftp.mkdir(convert_path_to_windows(current_check_dir))  # sub-directory missing, so created it
 
     def remote_isdir(self, path, sftp):
         self.check_ssh()
@@ -269,10 +308,25 @@ class SSHTransport:
                 sftp.remove(file_path)
 
     def close_ssh_transport(self):
+        if self.linux_sync:
+            self.close_ssh_transport_linux()
+        if self.windows_sync:
+            self.close_ssh_transport_windows()
+
+    def close_ssh_transport_linux(self):
         try:
             self.sftp_linux.close()
             self.scp_linux.close()
             self.client_ssh_linux.close()
+        except Exception as ex:
+            print("Exception close ssh transport: " + str(ex))
+            traceback.print_exc()
+
+    def close_ssh_transport_windows(self):
+        try:
+            self.sftp_windows.close()
+            self.scp_windows.close()
+            self.client_ssh_windows.close()
         except Exception as ex:
             print("Exception close ssh transport: " + str(ex))
             traceback.print_exc()
@@ -298,8 +352,12 @@ if __name__ == '__main__':
         print(config_options)
         print("Need monitor directory")
         exit(1)
-    elif not os.path.isdir(config_options["monitor_dir"]):
-        print(str(config_options["monitor_dir"]) + " is not a directiry")
+    if platform.system() == "Windows":
+        monitoring_dir = convert_path_to_windows(config_options["monitor_dir"])
+    else:
+        monitoring_dir = convert_path_to_unix(config_options["monitor_dir"])
+    if not os.path.isdir(monitoring_dir):
+        print(str(monitoring_dir) + " is not a directiry")
         exit(1)
     if "server_linux" in config_options:
         server_linux = config_options["server_linux"]
@@ -380,21 +438,27 @@ if __name__ == '__main__':
     if password_linux is None and password_windows is None:
         print("Need password for Windows or Linux")
 
-    monitoring_dir_name = os.path.basename(config_options["monitor_dir"])
+    monitoring_dir_name = os.path.basename(monitoring_dir)
 
-    if os.name != "Windows":
-        if sync_dir_windows is not None:
-            sync_dir_windows = convert_path_to_unix(sync_dir_windows)
-    else:
+    if platform.system() == "Windows":
         if sync_dir_linux is not None:
             sync_dir_linux = convert_path_to_windows(sync_dir_linux)
+        if sync_dir_windows is not None:
+            sync_dir_windows = convert_path_to_windows(sync_dir_windows)
+    else:
+        if sync_dir_windows is not None:
+            sync_dir_windows = convert_path_to_unix(sync_dir_windows)
+        if sync_dir_linux is not None:
+            sync_dir_linux = convert_path_to_unix(sync_dir_windows)
 
     ssh_transport = SSHTransport(server_linux, port_linux, user_linux, password_linux,
                                  server_windows, port_windows, user_windows, password_windows)
-    print("Linux sync dir: " + sync_dir_linux)
-    print("Windows sync dir: " + sync_dir_windows)
+    if sync_dir_linux is not None:
+        print("Linux sync dir: " + sync_dir_linux)
+    if sync_dir_windows is not None:
+        print("Windows sync dir: " + sync_dir_windows)
     observer = Observer()
-    observer.schedule(MyHandler(), path=config_options["monitor_dir"], recursive=True)
+    observer.schedule(MyHandler(), path=monitoring_dir, recursive=True)
     observer.start()
 
     try:
