@@ -1,9 +1,13 @@
 # ssh_sync_projects
 
 ## Need packages:
-1. paramiko
-		pip install paramiko
-2.  pip install wathdog
+1. Paramiko
+
+    pip install paramiko
+
+2.  Wathdog
+
+    pip install wathdog
 
 ## Sample Config File:
   {
