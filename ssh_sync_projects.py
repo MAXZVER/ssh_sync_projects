@@ -6,9 +6,9 @@ import time
 import paramiko
 import traceback
 import datetime
+import stat
 from watchdog.observers import Observer
 from watchdog.events import PatternMatchingEventHandler
-from stat import S_ISDIR
 from scp import SCPClient
 
 
@@ -96,6 +96,7 @@ class MyHandler(PatternMatchingEventHandler):
         global ssh_transport
         if event.event_type == "moved":
             ssh_transport.moved_file(event.src_path, event.dest_path)
+            return
         if not monitoring_file(event.src_path) or not_monitoring_file(event.src_path):
             return
         if event.is_directory:
@@ -104,28 +105,18 @@ class MyHandler(PatternMatchingEventHandler):
             elif event.event_type == "created":
                 ssh_transport.mkdir_ssh(event.src_path)
                 return
+            if event.event_type == "deleted":
+                ssh_transport.delete_ssh(event.src_path)
+                return
         elif not monitor_extension(event.src_path):
                 return
-        return
         if event.event_type == "deleted":
+            ssh_transport.delete_ssh(event.src_path)
             return
-            # paths_to_delete = get_remote_paths(src_path)
-            # if ssh_transport.linux_sync:
-            #     print("DELETE Linux: " + str(paths_to_delete["linux"]))
-            #     try:
-            #         ssh_transport.remote_delete(paths_to_delete["linux"], ssh_transport.sftp_linux)
-            #     except Exception as ex:
-            #         print("Exception delete: " + str(ex))
-            #         traceback.print_exc()
-            # if ssh_transport.windows_sync:
-            #     print("DELETE Windows: " + str(paths_to_delete["windows"]))
-            #     try:
-            #         ssh_transport.remote_delete(paths_to_delete["windows"], ssh_transport.sftp_windows)
-            #     except Exception as ex:
-            #         print("Exception delete: " + str(ex))
-            #         traceback.print_exc()
-            # return
-        ssh_transport.copy_remote_file(event.src_path)
+        if event.event_type == "created":
+            ssh_transport.copy_remote_file(event.src_path)
+        else:
+            ssh_transport.copy_remote_file(event.src_path)
 
     def on_any_event(self, event):
         self.remote_edit(event)
@@ -211,8 +202,7 @@ class SSHTransport:
             print(str(datetime.datetime.now()))
             print("SCP file Linux: " + path_file + " to " + destination_paths["linux"])
             try:
-                self.scp_linux.put(path_file, recursive=True,
-                                   remote_path=destination_paths["linux"])
+                self.scp_linux.put(path_file, convert_path_to_unix(destination_paths["linux"]))
             except Exception as ex:
                 print("Exception scp: " + str(ex))
                 traceback.print_exc()
@@ -220,11 +210,11 @@ class SSHTransport:
             print(str(datetime.datetime.now()))
             print("SCP file Windows: " + path_file + " to " + destination_paths["windows"])
             try:
-                self.scp_windows.put(path_file, recursive=True,
-                                     remote_path=destination_paths["windows"])
+                self.sftp_windows.put(path_file, convert_path_to_windows(destination_paths["windows"]))
             except Exception as ex:
                 print("Exception scp: " + str(ex))
                 traceback.print_exc()
+        print()
 
     def moved_file(self, src_path, moved_path):
         paths_to_src = get_remote_paths(src_path)
@@ -248,30 +238,45 @@ class SSHTransport:
             except Exception as ex:
                 print("Exception create directory: " + str(ex))
                 traceback.print_exc()
+        print()
 
     def mkdir_ssh(self, path_to_directory):
+        self.check_ssh()
         paths_to_create_dir = get_remote_paths(path_to_directory)
         if self.linux_sync:
+            try:
+                self.sftp_linux.stat(convert_path_to_unix(paths_to_create_dir["linux"]))
+                return
+            except IOError:
+                pass
+            print(str(datetime.datetime.now()))
             print("CREATE directory Linux: " + str(paths_to_create_dir["linux"]))
             try:
                 global sync_dir_linux
-                self.mkdir(paths_to_create_dir["linux"], sync_dir_linux, self.sftp_linux, True)
+                self.mkdir(paths_to_create_dir["linux"], sync_dir_linux, self.sftp_linux, linux=True)
             except Exception as ex:
                 print("Exception create directory: " + str(ex))
                 traceback.print_exc()
         if self.windows_sync:
+            try:
+                self.sftp_windows.stat(convert_path_to_windows(paths_to_create_dir["windows"]))
+                return
+            except IOError:
+                pass
+            print(str(datetime.datetime.now()))
             print("CREATE directory Windows: " + str(paths_to_create_dir["windows"]))
             try:
                 global sync_dir_windows
-                self.mkdir(paths_to_create_dir["windows"], sync_dir_windows, self.sftp_windows, False)
+                self.mkdir(paths_to_create_dir["windows"], sync_dir_windows, self.sftp_windows, linux=False)
                 self.close_ssh_transport_windows()
                 self.init_ssh_transport_windows()
             except Exception as ex:
                 print("Exception create directory: " + str(ex))
                 traceback.print_exc()
+        print()
 
-    def mkdir(self, remote_directory, base_directory, sftp, linux):
-        self.check_ssh()
+    @staticmethod
+    def mkdir(remote_directory, base_directory, sftp, linux):
         tree_new_dir = [os.path.basename(remote_directory)]
         current_dir = os.path.dirname(remote_directory)
         while current_dir != base_directory:
@@ -290,22 +295,50 @@ class SSHTransport:
                 else:
                     sftp.mkdir(convert_path_to_windows(current_check_dir))  # sub-directory missing, so created it
 
-    def remote_isdir(self, path, sftp):
+    def delete_ssh(self, path_to_delete):
         self.check_ssh()
-        try:
-            return S_ISDIR(sftp.stat(path).st_mode)
-        except IOError:
-            return False
+        remote_delete_path = get_remote_paths(path_to_delete)
+        if self.linux_sync:
+            print(str(datetime.datetime.now()))
+            print("DELETE Linux: " + path_to_delete + " remote path: " +
+                  convert_path_to_unix(remote_delete_path["linux"]))
+            try:
+                self.delete(remote_delete_path["linux"], self.sftp_linux, linux=True)
+            except Exception as ex:
+                print("Exception scp: " + str(ex))
+                traceback.print_exc()
+        if self.windows_sync:
+            print(str(datetime.datetime.now()))
+            print("DELETE Windows: " + path_to_delete + " remote path: " +
+                  convert_path_to_windows(remote_delete_path["windows"]))
+            try:
+                self.delete(remote_delete_path["windows"], self.sftp_windows, linux=False)
+            except Exception as ex:
+                print("Exception scp: " + str(ex))
+                traceback.print_exc()
+        print()
 
-    def remote_delete(self, path, sftp):
+    def delete(self, remote_path, sftp, linux):
         self.check_ssh()
-        files = self.sftp_linux.listdir(path=path)
-        for sub_file in files:
-            file_path = os.path.join(path, sub_file)
-            if self.remote_isdir(file_path, sftp):
-                self.remote_delete(file_path, sftp)
-            else:
-                sftp.remove(file_path)
+        if linux:
+            if stat.S_ISREG(sftp.stat(convert_path_to_unix(remote_path)).st_mode):
+                sftp.remove(convert_path_to_unix(remote_path))
+                return
+        else:
+            if stat.S_ISREG(sftp.stat(convert_path_to_windows(remote_path)).st_mode):
+                sftp.remove(convert_path_to_windows(remote_path))
+                return
+        if linux:
+            list_dir = sftp.listdir(convert_path_to_unix(remote_path))
+        else:
+            list_dir = sftp.listdir(convert_path_to_windows(remote_path))
+        for file in list_dir:
+            remote_file_path = os.path.join(remote_path, file)
+            self.delete(remote_file_path, sftp, linux)
+        if linux:
+            sftp.rmdir(convert_path_to_unix(remote_path))
+        else:
+            sftp.rmdir(convert_path_to_windows(remote_path))
 
     def close_ssh_transport(self):
         if self.linux_sync:
