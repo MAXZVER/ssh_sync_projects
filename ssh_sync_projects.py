@@ -9,7 +9,6 @@ import datetime
 import stat
 from watchdog.observers import Observer
 from watchdog.events import PatternMatchingEventHandler
-from scp import SCPClient
 
 
 def convert_path_to_windows(path):
@@ -135,7 +134,6 @@ class SSHTransport:
 
             self.client_ssh_linux = None
             self.sftp_linux = None
-            self.scp_linux = None
 
             self.init_ssh_transport_linux()
             print("Linux sync UP")
@@ -148,10 +146,10 @@ class SSHTransport:
             self.server_windows = a_server_windows
             self.port_windows = int(a_port_windows)
             self.user_windows = a_user_windows
+
             self.password_windows = a_password_windows
             self.client_ssh_windows = None
             self.sftp_windows = None
-            self.scp_windows = None
 
             self.init_ssh_transport_windows()
             print("Windows sync UP")
@@ -179,12 +177,10 @@ class SSHTransport:
     def init_ssh_transport_linux(self):
         self.create_ssh_client_linux()
         self.sftp_linux = self.client_ssh_linux.open_sftp()
-        self.scp_linux = SCPClient(self.client_ssh_linux.get_transport())
 
     def init_ssh_transport_windows(self):
         self.create_ssh_client_windows()
         self.sftp_windows = self.client_ssh_windows.open_sftp()
-        self.scp_windows = SCPClient(self.client_ssh_windows.get_transport())
 
     def check_ssh(self):
         if self.linux_sync:
@@ -202,7 +198,7 @@ class SSHTransport:
             print(str(datetime.datetime.now()))
             print("SCP file Linux: " + path_file + " to " + destination_paths["linux"])
             try:
-                self.scp_linux.put(path_file, convert_path_to_unix(destination_paths["linux"]))
+                self.sftp_linux.put(path_file, convert_path_to_unix(destination_paths["linux"]))
             except Exception as ex:
                 print("Exception scp: " + str(ex))
                 traceback.print_exc()
@@ -349,7 +345,6 @@ class SSHTransport:
     def close_ssh_transport_linux(self):
         try:
             self.sftp_linux.close()
-            self.scp_linux.close()
             self.client_ssh_linux.close()
         except Exception as ex:
             print("Exception close ssh transport: " + str(ex))
@@ -358,7 +353,6 @@ class SSHTransport:
     def close_ssh_transport_windows(self):
         try:
             self.sftp_windows.close()
-            self.scp_windows.close()
             self.client_ssh_windows.close()
         except Exception as ex:
             print("Exception close ssh transport: " + str(ex))
