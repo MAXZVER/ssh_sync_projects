@@ -3,11 +3,11 @@
 ## Need packages:
 1. Paramiko
 
-    pip install paramiko
+        pip install paramiko
 
 2.  Wathdog
 
-    pip install wathdog
+        pip install wathdog
 
 ## Sample Config File:
   {
