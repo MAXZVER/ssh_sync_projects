@@ -2,7 +2,7 @@
 
 ## Need packages:
 1. paramiko
-  pip install paramiko
+    pip install paramiko
 2.  pip install wathdog
 
 ## Sample Config File:
