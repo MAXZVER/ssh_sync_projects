@@ -93,12 +93,12 @@ class MyHandler(PatternMatchingEventHandler):
         """
         # the file will be processed there
         global ssh_transport
-        if event.event_type == "moved":
-            ssh_transport.moved_file(event.src_path, event.dest_path)
-            return
         if not monitoring_file(event.src_path) or not_monitoring_file(event.src_path):
             return
         if event.is_directory:
+            if event.event_type == "moved":
+                ssh_transport.moved_file(event.src_path, event.dest_path)
+                return
             if event.event_type == "modified":
                 return
             elif event.event_type == "created":
@@ -107,12 +107,22 @@ class MyHandler(PatternMatchingEventHandler):
             if event.event_type == "deleted":
                 ssh_transport.delete_ssh(event.src_path)
                 return
-        elif not monitor_extension(event.src_path):
+        if not monitor_extension(event.src_path):
+            # Check index jetbrains
+            if event.event_type == "moved":
+                if not monitor_extension(event.dest_path):
+                    return
+                ssh_transport.copy_remote_file(event.dest_path)
+            return
+        if event.event_type == "moved":
+            if not monitor_extension(event.dest_path):
                 return
+            ssh_transport.moved_file(event.src_path, event.dest_path)
+            return
         if event.event_type == "deleted":
             ssh_transport.delete_ssh(event.src_path)
             return
-        if event.event_type == "created":
+        if event.event_type == "created" or event.event_type == "modified":
             ssh_transport.copy_remote_file(event.src_path)
         else:
             ssh_transport.copy_remote_file(event.src_path)
